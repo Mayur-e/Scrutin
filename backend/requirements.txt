@@ -34,9 +34,7 @@ requests>=2.32
 beautifulsoup4>=4.12
 lxml>=5.2
 
-# Re-ranking
-sentence-transformers>=3.0
-torch>=2.2        # CPU-only for hackathon; add --index-url for CUDA if needed
+# Re-ranking (removed sentence-transformers/torch — unused, 3GB+ bloat)
 
 # WHOIS
 python-whois>=0.9
