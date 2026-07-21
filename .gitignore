@@ -68,7 +68,6 @@ Thumbs.db
 desktop.ini
 
 # ── Project-specific ─────────────────────────────────────────────────────────
-backend/app/tools/lib/
 backend/Docs/
 backend/Implementation/
 backend/Refrences/
