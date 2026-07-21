@@ -9,20 +9,25 @@ import { SpatialScroll } from '@/SpatialScroll';
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft } from 'lucide-react';
+import '@/lib/api-config'; // initialise API base URL from VITE_API_URL
+import { useVerification } from '@/hooks/useVerification';
 
 const queryClient = new QueryClient();
 
 function Home() {
   const [verifying, setVerifying] = useState(false);
   const [queryText, setQueryText] = useState("");
+  const { verify, data: verificationResult, isPending, error: verifyError, reset } = useVerification();
 
   const handleVerify = (text: string) => {
     setQueryText(text);
     setVerifying(true);
+    verify({ claim: text }); // ← real POST /api/verify to the Python backend
   };
 
   const handleCancel = () => {
     setVerifying(false);
+    reset(); // clear any pending/errored mutation state
   };
 
   return (
