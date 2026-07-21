@@ -21,10 +21,30 @@ export function Hero({ onVerify, isVerifying = false, onCancel }: { onVerify?: (
   const [loopNum, setLoopNum] = useState(0);
   const [typingSpeed, setTypingSpeed] = useState(75);
   const [isInputEmpty, setIsInputEmpty] = useState(true);
+  const [recentSearches, setRecentSearches] = useState<{query: string, verdict: string}[]>([]);
+
+  useEffect(() => {
+    import('@/lib/api-config').then(({ apiUrl }) => {
+      // apiUrl is usually "http://localhost:8000" or "/api"
+      const url = apiUrl.endsWith('/api') ? apiUrl.replace(/\/api$/, '/api/recent') : `${apiUrl}/api/recent`;
+      fetch(url)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            setRecentSearches(data);
+          }
+        })
+        .catch(err => console.error("Failed to fetch recent searches", err));
+    });
+  }, []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [attachedUrl, setAttachedUrl] = useState<string | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const micButtonRef = useRef<HTMLButtonElement>(null);
+  const [micTooltipPos, setMicTooltipPos] = useState<{ x: number; y: number } | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -55,6 +75,74 @@ export function Hero({ onVerify, isVerifying = false, onCancel }: { onVerify?: (
       }
     };
   }, [attachedUrl]);
+
+  const [micError, setMicError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const createRecognition = () => {
+        const r = new SpeechRecognition();
+        r.continuous = false;
+        r.interimResults = true;
+        r.lang = 'en-US';
+
+        r.onresult = (event: any) => {
+          const transcript = Array.from(event.results)
+            .map((result: any) => result[0].transcript)
+            .join("");
+          setMicError(null);
+          if (inputRef.current) {
+            inputRef.current.innerText = transcript;
+            setIsInputEmpty(transcript.trim() === "");
+          }
+        };
+
+        r.onerror = (event: any) => {
+          console.error("Speech recognition error", event.error);
+          setIsListening(false);
+          if (event.error === 'network') {
+            setMicError("Mic requires internet access to Google's speech servers. Try typing instead.");
+          } else if (event.error === 'not-allowed') {
+            setMicError("Microphone access denied. Please allow mic access in your browser settings.");
+          } else {
+            setMicError(`Speech error: ${event.error}. Please try again.`);
+          }
+          // Auto-clear error after 4 seconds
+          setTimeout(() => setMicError(null), 4000);
+        };
+        
+        r.onend = () => {
+          setIsListening(false);
+        };
+        return r;
+      };
+      recognitionRef.current = createRecognition();
+    }
+    
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, []);
+
+
+  const handleMicClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    } else {
+      // Capture button position for fixed tooltip
+      if (micButtonRef.current) {
+        const rect = micButtonRef.current.getBoundingClientRect();
+        setMicTooltipPos({ x: rect.left + rect.width / 2, y: rect.top - 12 });
+      }
+      setIsListening(true);
+      recognitionRef.current?.start();
+    }
+  };
 
   const phrases = [
     "Verify if: 'Bananas are slightly radioactive'...",
@@ -111,6 +199,49 @@ export function Hero({ onVerify, isVerifying = false, onCancel }: { onVerify?: (
   };
 
   return (
+    <>
+      {/* Fixed-position mic error tooltip — escapes all overflow:hidden parents */}
+      <AnimatePresence>
+        {micError && micTooltipPos && (
+          <motion.div
+            key="mic-tooltip"
+            initial={{ opacity: 0, y: 6, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            style={{
+              position: 'fixed',
+              left: micTooltipPos.x,
+              top: micTooltipPos.y,
+              transform: 'translate(-50%, -100%)',
+              background: 'rgba(15, 8, 3, 0.92)',
+              backdropFilter: 'blur(16px)',
+              color: '#fff',
+              fontSize: '12.5px',
+              fontFamily: 'var(--font-aeonik)',
+              padding: '10px 16px',
+              borderRadius: '12px',
+              boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              zIndex: 99999,
+              pointerEvents: 'none',
+              width: '240px',
+              textAlign: 'center',
+              lineHeight: 1.45,
+            }}
+          >
+            <div style={{
+              position: 'absolute', bottom: '-6px', left: '50%',
+              transform: 'translateX(-50%)',
+              width: 0, height: 0,
+              borderLeft: '6px solid transparent',
+              borderRight: '6px solid transparent',
+              borderTop: '6px solid rgba(15, 8, 3, 0.92)'
+            }} />
+            {micError}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     <div className={`relative w-full flex flex-col items-center justify-start overflow-hidden transition-all duration-700 ${isVerifying ? 'min-h-0 pt-6 px-6' : 'min-h-[100dvh] pt-[100px]'}`}>
       <div className="relative z-10 w-full max-w-7xl px-4 flex flex-col items-center">
         {/* Organic merged warm-white highlight cloud behind text to blend with background video */}
@@ -198,7 +329,7 @@ export function Hero({ onVerify, isVerifying = false, onCancel }: { onVerify?: (
           initial={{ scale: 0.97, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.9 }}
-          className="relative w-full max-w-[780px] mb-24 cursor-text overflow-hidden rounded-[20px] z-10"
+          className="relative w-full max-w-[780px] mb-4 cursor-text overflow-hidden rounded-[20px] z-10"
           style={{
             backgroundImage: `
               radial-gradient(rgba(198, 120, 69, 0.16) 1.5px, transparent 1.5px),
@@ -424,27 +555,30 @@ export function Hero({ onVerify, isVerifying = false, onCancel }: { onVerify?: (
 
                 {/* Audio/Mic Button */}
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                  }}
+                  ref={micButtonRef}
+                  onClick={handleMicClick}
                   className="w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 active:scale-95 focus:outline-none cursor-pointer"
                   style={{
-                    background: 'rgba(0, 0, 0, 0.04)',
-                    border: '1px solid rgba(0, 0, 0, 0.06)',
+                    background: isListening ? 'rgba(239, 68, 68, 0.1)' : 'rgba(0, 0, 0, 0.04)',
+                    border: isListening ? '1px solid rgba(239, 68, 68, 0.2)' : '1px solid rgba(0, 0, 0, 0.06)',
                     boxShadow: 'inset 0 1px 2px rgba(255, 255, 255, 0.8), 0 1px 1px rgba(0,0,0,0.03)',
-                    color: '#6E6254',
+                    color: isListening ? '#ef4444' : '#6E6254',
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'rgba(0, 0, 0, 0.08)';
-                    e.currentTarget.style.color = '#3E3529';
+                    if (!isListening) {
+                      e.currentTarget.style.background = 'rgba(0, 0, 0, 0.08)';
+                      e.currentTarget.style.color = '#3E3529';
+                    }
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'rgba(0, 0, 0, 0.04)';
-                    e.currentTarget.style.color = '#6E6254';
+                    if (!isListening) {
+                      e.currentTarget.style.background = 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = '#6E6254';
+                    }
                   }}
                   aria-label="Voice input"
                 >
-                  <Mic className="w-5 h-5" />
+                  <Mic className={`w-5 h-5 ${isListening ? 'animate-pulse' : ''}`} />
                 </button>
 
                 {/* Gold Dial Grooved Submit Button */}
@@ -486,7 +620,38 @@ export function Hero({ onVerify, isVerifying = false, onCancel }: { onVerify?: (
           )}
         </motion.div>
 
+        {/* Recent Searches */}
+        {!isVerifying && recentSearches.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6, duration: 0.6 }}
+            className="flex flex-wrap justify-center items-center gap-2 max-w-[780px] px-4 mb-20 z-10"
+          >
+            <span className="text-[11.5px] uppercase tracking-widest text-[#5E5143] font-bold mr-1 font-sans opacity-90 drop-shadow-sm">
+              Recent:
+            </span>
+            {recentSearches.map((search, idx) => (
+              <button
+                key={idx}
+                onClick={() => {
+                  if (onVerify) onVerify(search.query);
+                }}
+                className="px-3.5 py-1.5 rounded-full border border-[rgba(255,255,255,0.7)] text-[12.5px] text-[#2B231D] font-medium transition-all hover:scale-105 hover:bg-[rgba(250,248,240,0.9)] active:scale-95 cursor-pointer shadow-[0_2px_8px_rgba(0,0,0,0.05),inset_0_1px_1px_rgba(255,255,255,0.9)] flex items-center"
+                style={{
+                  background: 'rgba(238, 234, 222, 0.75)',
+                  backdropFilter: 'blur(16px)',
+                }}
+              >
+                <span className="max-w-[180px] truncate drop-shadow-sm">{search.query}</span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+
       </div>
     </div>
+    </>
   );
 }
+

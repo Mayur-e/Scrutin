@@ -40,7 +40,7 @@ def validate_env() -> dict:
             has_error = True
         else:
             config[key] = val
-            console.print(f"[green]✓[/] {key}")
+            console.print(f"[green]OK[/] {key}")
 
     for key, purpose in RECOMMENDED_KEYS.items():
         val = os.getenv(key, "").strip()

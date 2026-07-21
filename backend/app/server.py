@@ -25,9 +25,9 @@ def main() -> None:
     host = os.getenv("HOST", "0.0.0.0")
 
     print(f"Starting Scrutin API server on http://{host}:{port}")
-    print(f"  Swagger UI  → http://localhost:{port}/api/docs")
-    print(f"  Health      → http://localhost:{port}/api/healthz")
-    print(f"  Verify      → POST http://localhost:{port}/api/verify")
+    print(f"  Swagger UI  -> http://localhost:{port}/api/docs")
+    print(f"  Health      -> http://localhost:{port}/api/healthz")
+    print(f"  Verify      -> POST http://localhost:{port}/api/verify")
 
     uvicorn.run(
         "app.api:app",

@@ -11,6 +11,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft } from 'lucide-react';
 import '@/lib/api-config'; // initialise API base URL from VITE_API_URL
 import { useVerification } from '@/hooks/useVerification';
+import { VerificationResult } from '@/components/VerificationResult';
 
 const queryClient = new QueryClient();
 
@@ -73,29 +74,46 @@ function Home() {
               }} 
             />
           </div>
-
-        {/* Left Column: Hero page. Shrinks to 40% width on verification. */}
-        <motion.div
-          animate={verifying ? { width: '40vw' } : { width: '100vw' }}
-          transition={{ duration: 0.85, ease: [0.76, 0, 0.24, 1] }}
-          className="relative min-h-screen flex-shrink-0 flex items-center justify-center overflow-hidden z-10"
-        >
-          <Hero onVerify={handleVerify} isVerifying={verifying} onCancel={handleCancel} />
-        </motion.div>
-
-        {/* Right Column: Spatial Scroll cards. Slides in from right. */}
-        <AnimatePresence>
-          {verifying && (
-            <motion.div
-              key="verification-workspace"
-              initial={{ x: '60vw', opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: '60vw', opacity: 0 }}
+        
+        <AnimatePresence mode="wait">
+          {verificationResult && !isPending ? (
+            <motion.div 
+              key="result"
+              initial={{ opacity: 0, scale: 0.95, filter: 'blur(10px)' }}
+              animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+              exit={{ opacity: 0, scale: 1.05, filter: 'blur(10px)' }}
               transition={{ duration: 0.85, ease: [0.76, 0, 0.24, 1] }}
-              className="w-[60vw] h-screen flex-shrink-0 relative overflow-hidden z-10"
+              className="absolute inset-0 z-50 flex justify-center items-start overflow-y-auto no-scrollbar p-4 md:p-8 pt-[80px] pb-24"
             >
-              <SpatialScroll />
+              <VerificationResult result={verificationResult} onReset={handleCancel} />
             </motion.div>
+          ) : (
+            <>
+              {/* Left Column: Hero page. Shrinks to 40% width on verification. */}
+              <motion.div
+                animate={verifying ? { width: '40vw' } : { width: '100vw' }}
+                transition={{ duration: 0.85, ease: [0.76, 0, 0.24, 1] }}
+                className="relative min-h-screen flex-shrink-0 flex items-center justify-center overflow-hidden z-10"
+              >
+                <Hero onVerify={handleVerify} isVerifying={verifying} onCancel={handleCancel} />
+              </motion.div>
+
+              {/* Right Column: Spatial Scroll cards. Slides in from right. */}
+              <AnimatePresence>
+                {verifying && (
+                  <motion.div
+                    key="verification-workspace"
+                    initial={{ x: '60vw', opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    exit={{ x: '60vw', opacity: 0 }}
+                    transition={{ duration: 0.85, ease: [0.76, 0, 0.24, 1] }}
+                    className="w-[60vw] h-screen flex-shrink-0 relative overflow-hidden z-10"
+                  >
+                    <SpatialScroll />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>
           )}
         </AnimatePresence>
       </div>

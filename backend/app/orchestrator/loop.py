@@ -60,17 +60,20 @@ async def run_orchestrator(
     if not similar:
         sqlite_similar = await find_similar_run(raw_input, db_path=db_path)
         if sqlite_similar:
+            is_exact = sqlite_similar[0]["raw_input"].lower().strip() == raw_input.lower().strip()
             similar = [{
                 "claim_id": sqlite_similar[0]["run_id"],
                 "run_id": sqlite_similar[0]["run_id"],
                 "verdict": sqlite_similar[0]["overall_verdict"],
-                "score": 0.97,
+                "score": 1.0 if is_exact else 0.8,
                 "text": sqlite_similar[0]["raw_input"],
             }]
 
     if similar:
         top = similar[0]
-        if top["score"] >= 0.95:
+        is_exact_match = (top.get("text") or "").lower().strip() == raw_input.lower().strip()
+        
+        if top["score"] >= 0.95 and is_exact_match:
             log.info(f"Episodic fast-path hit: score={top['score']:.3f} → verdict={top['verdict']}")
             bb.provisional_verdict = top["verdict"]
             import sqlite3
@@ -140,24 +143,28 @@ async def run_orchestrator(
                 log.info(f"Iteration {bb.iterations}: No more tasks — running evaluator")
                 # Evaluate stopping criteria
                 bb_summary = _summarize_blackboard(bb)
-                ev, score = await evaluator.evaluate(bb_summary)
-                log.info(f"Evaluator score: {score:.2f} (threshold: {evaluator.STOPPING_THRESHOLD})")
+                try:
+                    ev, score = await evaluator.evaluate(bb_summary)
+                    log.info(f"Evaluator score: {score:.2f} (threshold: {evaluator.STOPPING_THRESHOLD})")
 
-                if score >= evaluator.STOPPING_THRESHOLD:
-                    log.info("Stopping criteria met ✓")
-                    break
+                    if score >= evaluator.STOPPING_THRESHOLD:
+                        log.info("Stopping criteria met [OK]")
+                        break
 
-                # Not satisfied — reflect and replan
-                log.info("Stopping criteria NOT met — reflecting and replanning")
-                reflection = await evaluator.reflect(bb_summary, ev)
-                log.bind(agent="reflection").info(f"Root cause: {reflection.root_cause}")
-                
-                old_task_count = len(bb.plan.tasks)
-                bb.plan = planner.replan(bb, ev, reflection)
-                if len(bb.plan.tasks) == old_task_count:
-                    log.warning("Replan did not add any new tasks — stopping to prevent infinite loop")
+                    # Not satisfied — reflect and replan
+                    log.info("Stopping criteria NOT met — reflecting and replanning")
+                    reflection = await evaluator.reflect(bb_summary, ev)
+                    log.bind(agent="reflection").info(f"Root cause: {reflection.root_cause}")
+                    
+                    old_task_count = len(bb.plan.tasks)
+                    bb.plan = planner.replan(bb, ev, reflection)
+                    if len(bb.plan.tasks) == old_task_count:
+                        log.warning("Replan did not add any new tasks — stopping to prevent infinite loop")
+                        break
+                    continue
+                except Exception as eval_err:
+                    log.error(f"Evaluator/Reflection failed (likely rate limit): {eval_err}. Forcing stop.")
                     break
-                continue
 
             # Gather all pending tasks in the same group (if group exists)
             if next_t.parallel_group is not None:
@@ -218,7 +225,7 @@ async def run_orchestrator(
                         )
                         bb.append_finding(adv_finding)
                         if finding.verdict_stands:
-                            log.bind(agent="adversarial").info("verdict_stands=True ✓")
+                            log.bind(agent="adversarial").info("verdict_stands=True [OK]")
                         else:
                             log.bind(agent="adversarial").warning(
                                 f"verdict_stands=False → '{finding.strongest_counter[:80]}...'"
@@ -251,6 +258,7 @@ async def run_orchestrator(
 
         # Wire orchestrator_agent for final synthesis (LLM call, not heuristic)
         from app.agents.orchestrator_agent import orchestrator_agent
+        is_fallback = False
         try:
             bb_summary = _summarize_blackboard(bb)
             prompt = (
@@ -281,6 +289,7 @@ async def run_orchestrator(
         except Exception as synth_err:
             log.error(f"Failed orchestrator_agent final synthesis: {synth_err}. Falling back to heuristic.")
             report = _build_final_report(bb, elapsed, budget_exhausted)
+            is_fallback = True
 
         bb.final_report = report.model_dump()
 
@@ -303,12 +312,15 @@ async def run_orchestrator(
             log.error(f"Reputation commitment failed: {rep_err}")
 
         # ── Upsert verified claims into Pinecone ───────────────────────────────────
-        try:
-            from app.memory.semantic import upsert_claim
-            for claim_id, claim_text in bb.atomic_claims.items():
-                await upsert_claim(claim_id, claim_text, bb.run_id, report.overall_verdict, config, db_path)
-        except Exception as sem_err:
-            log.error(f"Claim semantic upsert failed: {sem_err}")
+        if not is_fallback:
+            try:
+                from app.memory.semantic import upsert_claim
+                for claim_id, claim_text in bb.atomic_claims.items():
+                    await upsert_claim(claim_id, claim_text, bb.run_id, report.overall_verdict, config, db_path)
+            except Exception as sem_err:
+                log.error(f"Claim semantic upsert failed: {sem_err}")
+        else:
+            log.info("Skipping semantic cache upsert because this run was a fallback heuristic.")
 
         # Write #1: Raw Blackboard audit trail (synchronous connection offloaded to thread to prevent event-loop blocking)
         def _sync_write_final():
@@ -330,22 +342,25 @@ async def run_orchestrator(
         await asyncio.to_thread(_sync_write_final)
 
         # Write #2: Structured fields for analytics (asynchronous connection)
-        try:
-            await record_run(
-                run_id=bb.run_id,
-                raw_input=bb.raw_input,
-                input_type=bb.input_type,
-                overall_verdict=report.overall_verdict,
-                credibility_score=report.credibility_score,
-                confidence=report.confidence,
-                data_json=bb.model_dump_json(),
-                iterations_used=bb.iterations,
-                budget_exhausted=budget_exhausted,
-                processing_time_seconds=elapsed,
-                db_path=db_path,
-            )
-        except Exception as db_err:
-            log.error(f"Failed to record structured episodic run: {db_err}")
+        if not is_fallback:
+            try:
+                await record_run(
+                    run_id=bb.run_id,
+                    raw_input=bb.raw_input,
+                    input_type=bb.input_type,
+                    overall_verdict=report.overall_verdict,
+                    credibility_score=report.credibility_score,
+                    confidence=report.confidence,
+                    data_json=bb.model_dump_json(),
+                    iterations_used=bb.iterations,
+                    budget_exhausted=budget_exhausted,
+                    processing_time_seconds=elapsed,
+                    db_path=db_path,
+                )
+            except Exception as db_err:
+                log.error(f"Failed to record structured episodic run: {db_err}")
+        else:
+            log.info("Skipping episodic cache write because this run was a fallback heuristic.")
 
         log.info(f"Run complete: {run_id} | verdict={report.overall_verdict} | time={elapsed:.1f}s")
 

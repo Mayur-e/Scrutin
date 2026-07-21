@@ -157,3 +157,39 @@ async def verify(body: VerifyRequest):
 
     # FastAPI will serialize the Pydantic model automatically
     return report
+
+import sqlite3
+
+class RecentSearch(BaseModel):
+    query: str
+    verdict: str | None = None
+    created_at: str
+
+@app.get(
+    "/api/recent",
+    response_model=list[RecentSearch],
+    summary="Get recent successful searches",
+    tags=["verification"],
+)
+async def get_recent_searches():
+    """Returns the top 5 most recent unique queries that were successfully verified."""
+    db_path = os.getenv("SCRUTIN_DB_PATH", "scrutin.db")
+    query = """
+        SELECT raw_input as query, overall_verdict as verdict, MAX(created_at) as created_at
+        FROM episodic_runs 
+        GROUP BY raw_input 
+        ORDER BY created_at DESC 
+        LIMIT 5
+    """
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        return [RecentSearch(**dict(row)) for row in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if 'conn' in locals():
+            conn.close()
